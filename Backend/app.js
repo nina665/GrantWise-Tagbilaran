@@ -18,6 +18,18 @@ const {
   DEFAULT_SCHOOL_DOMAIN_BY_ID,
 } = require("./staff-directory-config");
 const { getAllowedDeveloperEmails } = require("./scripts/bootstrap-developer");
+const {
+  SYSTEM_ADMIN_EMAILS,
+  getStaffAccount,
+  isWhitelistedStaff,
+} = require("./staff-accounts");
+
+const STAFF_ROLES = new Set([
+  "System Admin",
+  "LGU Admin",
+  "Barangay Coordinator",
+  "Registrar",
+]);
 
 const SESSION_COOKIE = "grantwise_session";
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
@@ -149,10 +161,8 @@ function getEmailPolicyConfig(env = process.env) {
   const barangayDomains = parseConfiguredDomainSet(
     env.ALLOWED_BARANGAY_EMAIL_DOMAINS || env.BARANGAY_EMAIL_DOMAINS,
   );
-  const developerAllowlist = new Set([
-    ...getAllowedDeveloperEmails(env),
-    ...parseDeveloperEmailList(env.INITIAL_DEVELOPER_ALLOWLIST),
-  ]);
+  // Only the whitelisted System Admin accounts (staff-accounts.js).
+  const developerAllowlist = new Set(SYSTEM_ADMIN_EMAILS);
   const strictSchoolDomainAllowlist =
     env.STRICT_SCHOOL_DOMAIN_ALLOWLIST === "true";
   const requireStudentSchoolEmail = env.REQUIRE_STUDENT_SCHOOL_EMAIL === "true";
@@ -175,24 +185,15 @@ function getEmailPolicyConfig(env = process.env) {
   };
 }
 
-// Demo/test sign-in: staff (any email, incl. Gmail) share DEMO_STAFF_PASSWORD
-// and allowlisted developers share DEMO_DEV_PASSWORD. Never active in
-// production, and only when the matching password is configured.
-function getDemoAuthConfig(env = process.env) {
-  const nonProduction = env.NODE_ENV !== "production";
-  const staffPassword =
-    nonProduction && typeof env.DEMO_STAFF_PASSWORD === "string"
-      ? env.DEMO_STAFF_PASSWORD
-      : "";
-  const devPassword =
-    nonProduction && typeof env.DEMO_DEV_PASSWORD === "string"
-      ? env.DEMO_DEV_PASSWORD
-      : "";
+// Demo/shared-password sign-in is removed. Staff sign in only with the
+// per-account Argon2id hash stored in the database, and only if the email is
+// in the whitelist (staff-accounts.js).
+function getDemoAuthConfig() {
   return {
-    demoStaffPassword: staffPassword,
-    demoDevPassword: devPassword,
-    demoStaffAuthEnabled: staffPassword.length > 0,
-    demoDevAuthEnabled: devPassword.length > 0,
+    demoStaffPassword: "",
+    demoDevPassword: "",
+    demoStaffAuthEnabled: false,
+    demoDevAuthEnabled: false,
   };
 }
 
@@ -200,52 +201,6 @@ function safeEqualString(a, b) {
   const ha = crypto.createHash("sha256").update(String(a)).digest();
   const hb = crypto.createHash("sha256").update(String(b)).digest();
   return crypto.timingSafeEqual(ha, hb);
-}
-
-// Exact demo credentials per email. These override the general role rules:
-//   "dev"   -> DEMO_DEV_PASSWORD
-//   "staff" -> DEMO_STAFF_PASSWORD
-const DEMO_PASSWORD_KIND_BY_EMAIL = Object.freeze({
-  "admin.marie@grantwise.com": "dev",
-  "admin.angela@grantwise.com": "dev",
-  "admin.ellaine@grantwise.com": "dev",
-  "cuevas.sharee_angela@hnu.edu.ph": "staff",
-  "medrina.nina_marie@hnu.edu.ph": "staff",
-  "palaca.szarina@hnu.edu.ph": "staff",
-});
-
-const DEMO_ELIGIBLE_ROLES = new Set([
-  "System Admin",
-  "LGU Admin",
-  "Barangay Coordinator",
-  "Registrar",
-]);
-
-function matchesDemoPassword(user, password, policyConfig) {
-  const email = normalizeEmail(user.email);
-  if (!DEMO_ELIGIBLE_ROLES.has(user.role_name)) return false;
-
-  const matchesDev = () =>
-    policyConfig.demoDevAuthEnabled &&
-    safeEqualString(password, policyConfig.demoDevPassword);
-  const matchesStaff = () =>
-    policyConfig.demoStaffAuthEnabled &&
-    safeEqualString(password, policyConfig.demoStaffPassword);
-
-  // Explicitly listed accounts: only their assigned password is accepted.
-  const kind = DEMO_PASSWORD_KIND_BY_EMAIL[email];
-  if (kind) return kind === "dev" ? matchesDev() : matchesStaff();
-
-  // Other developers on the allowlist use the developer password.
-  if (user.role_name === "System Admin") {
-    return policyConfig.developerAllowlist.has(email) && matchesDev();
-  }
-
-  // Accounts whose address starts with "admin" use the developer password.
-  if (/^admin([._-]|$)/.test(email.split("@")[0])) return matchesDev();
-
-  // Every other staff account (e.g. personal Gmail) uses the staff password.
-  return matchesStaff();
 }
 
 function normalizeDomainList(schoolDomainFromDb) {
@@ -347,6 +302,17 @@ function validateEmailForRole(
   }
 
   const { domain, normalized } = parsed;
+
+  // Staff roles: the exact email must be whitelisted for exactly this role.
+  if (STAFF_ROLES.has(role)) {
+    if (isWhitelistedStaff(normalized, role)) {
+      return { valid: true, normalizedEmail: normalized, domain };
+    }
+    return {
+      valid: false,
+      message: "This email address is not an authorized staff account.",
+    };
+  }
 
   if (role === "System Admin") {
     const allowlist =
@@ -540,191 +506,6 @@ const registrationSchema = z
       .nullable(),
   })
   .strict();
-
-const DEMO_DEFAULT_STAFF_SCOPE = Object.freeze({
-  "LGU Admin": "City Scholarship Office",
-  "Barangay Coordinator": "Taloto",
-  Registrar: "Holy Name University",
-});
-
-// Demo mode only: a Gmail address that is not in the database yet can sign in
-// with DEMO_STAFF_PASSWORD. The staff account is created on the spot.
-// Role/scope come from the optional login fields, else from
-// DEMO_AUTO_STAFF_ROLE / DEMO_AUTO_STAFF_SCOPE, else the defaults above.
-async function provisionDemoStaffAccount(
-  dbPool,
-  { email, password, staffRole, staffScope },
-  policyConfig,
-  env = process.env,
-) {
-  if (!policyConfig.demoStaffAuthEnabled) return false;
-  if (!safeEqualString(password, policyConfig.demoStaffPassword)) return false;
-
-  const parsed = parseEmailAddress(email);
-  if (!parsed || !PERSONAL_GMAIL_DOMAINS.has(parsed.domain)) return false;
-  if (/^admin([._-]|$)/.test(parsed.localPart)) return false;
-  if (policyConfig.developerAllowlist.has(parsed.normalized)) return false;
-
-  const role = staffRole || env.DEMO_AUTO_STAFF_ROLE || "LGU Admin";
-  if (!DEMO_DEFAULT_STAFF_SCOPE[role]) return false;
-  const scopeName =
-    staffScope || env.DEMO_AUTO_STAFF_SCOPE || DEMO_DEFAULT_STAFF_SCOPE[role];
-
-  const client = await dbPool.connect();
-  try {
-    await client.query("BEGIN");
-
-    const roleRow = await client.query(
-      'SELECT role_id FROM "Roles" WHERE role_name = $1',
-      [role],
-    );
-    if (roleRow.rowCount === 0) {
-      await client.query("ROLLBACK");
-      return false;
-    }
-    const roleId = roleRow.rows[0].role_id;
-
-    let scopeColumn;
-    let scopeId;
-    let barangayIdForUser = null;
-    if (role === "LGU Admin") {
-      const r = await client.query(
-        'SELECT funding_unit_id AS id FROM "Funding_Units" WHERE funding_unit_name = $1',
-        [scopeName],
-      );
-      scopeColumn = "funding_unit_id";
-      scopeId = r.rows[0]?.id;
-    } else if (role === "Registrar") {
-      const r = await client.query(
-        'SELECT school_id AS id FROM "Schools" WHERE school_name = $1 AND is_approved = TRUE',
-        [scopeName],
-      );
-      scopeColumn = "school_id";
-      scopeId = r.rows[0]?.id;
-    } else {
-      const r = await client.query(
-        'SELECT barangay_id AS id FROM "Barangays" WHERE barangay_name = $1',
-        [scopeName],
-      );
-      scopeColumn = "barangay_id";
-      scopeId = r.rows[0]?.id;
-      barangayIdForUser = scopeId || null;
-    }
-    if (!scopeId) {
-      await client.query("ROLLBACK");
-      console.warn(
-        `Demo staff sign-up skipped for ${parsed.normalized}: ${role} scope "${scopeName}" not found.`,
-      );
-      return false;
-    }
-
-    if (role === "Barangay Coordinator") {
-      // One current coordinator per barangay: only a seeded demo coordinator
-      // may be replaced.
-      const current = await client.query(
-        `SELECT u.email
-         FROM "Barangay_Coordinators" bc
-         JOIN "Users" u ON u.user_id = bc.user_id
-         WHERE bc.barangay_id = $1 AND bc.is_current = TRUE`,
-        [scopeId],
-      );
-      const blocked = current.rows.some(
-        (row) => !String(row.email).toLowerCase().endsWith("@grantwise.local"),
-      );
-      if (blocked) {
-        await client.query("ROLLBACK");
-        console.warn(
-          `Demo staff sign-up skipped for ${parsed.normalized}: barangay "${scopeName}" already has a coordinator.`,
-        );
-        return false;
-      }
-    }
-
-    const passwordHash = await argon2.hash(policyConfig.demoStaffPassword, {
-      type: argon2.argon2id,
-      memoryCost: 19456,
-      timeCost: 2,
-      parallelism: 1,
-    });
-    const firstName =
-      parsed.localPart.split(/[._\d]/).filter(Boolean)[0] || "Staff";
-    const userRes = await client.query(
-      `INSERT INTO "Users" (
-          role_id, barangay_id, first_name, last_name, email, password_hash,
-          phone_number, email_verified_at, is_active
-       ) VALUES ($1, $2, $3, $4, $5, $6, '09170000000', NOW(), TRUE)
-       ON CONFLICT (email) DO NOTHING
-       RETURNING user_id`,
-      [
-        roleId,
-        barangayIdForUser,
-        firstName.charAt(0).toUpperCase() + firstName.slice(1),
-        role,
-        parsed.normalized,
-        passwordHash,
-      ],
-    );
-    if (userRes.rowCount === 0) {
-      // Created concurrently; let the normal lookup handle it.
-      await client.query("ROLLBACK");
-      return true;
-    }
-    const userId = userRes.rows[0].user_id;
-
-    if (role === "LGU Admin") {
-      await client.query(
-        `INSERT INTO "LGU_Admins" (user_id, funding_unit_id, position_title, is_active)
-         VALUES ($1, $2, 'Program Administrator', TRUE)`,
-        [userId, scopeId],
-      );
-    } else if (role === "Registrar") {
-      await client.query(
-        `INSERT INTO "Registrars" (user_id, school_id, position_title, is_active)
-         VALUES ($1, $2, 'School Registrar', TRUE)`,
-        [userId, scopeId],
-      );
-    } else {
-      await client.query(
-        `UPDATE "Barangay_Coordinators" SET is_current = FALSE
-         WHERE barangay_id = $1 AND is_current = TRUE`,
-        [scopeId],
-      );
-      await client.query(
-        `INSERT INTO "Barangay_Coordinators" (user_id, barangay_id, position_title, term_start, is_current)
-         VALUES ($1, $2, 'Barangay Education Coordinator', '2025-01-01', TRUE)`,
-        [userId, scopeId],
-      );
-    }
-
-    await client.query(
-      `INSERT INTO "Staff_Email_Authorizations" (
-          email, role_name, ${scopeColumn}, position_title, status,
-          activated_at, activated_user_id, notes
-       )
-       SELECT $1::VARCHAR, $2::VARCHAR, $3::INTEGER, $4::VARCHAR, 'active',
-              NOW(), $5::INTEGER, 'demo_auto_provisioned'
-       WHERE NOT EXISTS (
-           SELECT 1 FROM "Staff_Email_Authorizations"
-           WHERE LOWER(BTRIM(email)) = LOWER(BTRIM($1::VARCHAR))
-             AND status IN ('pending', 'active')
-       )`,
-      [parsed.normalized, role, scopeId, "Demo staff account", userId],
-    );
-
-    await client.query("COMMIT");
-    return true;
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      /* ignore */
-    }
-    console.error("Demo staff auto-provisioning failed:", error.message);
-    return false;
-  } finally {
-    client.release();
-  }
-}
 
 const loginSchema = z
   .object({
@@ -1476,6 +1257,25 @@ function createApp({
     });
   }
 
+  // Staff accounts are fixed (staff-accounts.js). Every route that could
+  // create, invite, or re-authorize staff is closed.
+  const denyStaffProvisioning = (req, res) =>
+    res.status(403).json({
+      message:
+        "Staff accounts are fixed and cannot be created, invited, or changed here.",
+    });
+  app.use(
+    [
+      "/api/auth/staff-register",
+      "/api/auth/staff-invitations",
+      "/api/admin/staff-accounts",
+    ],
+    denyStaffProvisioning,
+  );
+  app.use("/api/system-admin/staff-authorizations", (req, res, next) =>
+    req.method === "GET" ? next() : denyStaffProvisioning(req, res),
+  );
+
   if (allowRegistration) {
     app.post("/api/auth/register", authRateLimit, async (req, res) => {
       const input = registrationSchema.safeParse(req.body);
@@ -1490,6 +1290,11 @@ function createApp({
       }
 
       const data = input.data;
+      if (getStaffAccount(data.email)) {
+        return res.status(403).json({
+          message: "This email address is reserved for a staff account.",
+        });
+      }
       if (emailPolicyConfig.developerAllowlist.has(data.email)) {
         return res.status(403).json({
           message:
@@ -2268,17 +2073,7 @@ function createApp({
              LIMIT 1`,
         [input.data.email],
       );
-    let user = (await runLoginLookup()).rows[0];
-    if (!user) {
-      // Demo mode: unknown Gmail + the shared staff password creates the
-      // staff account on first sign-in.
-      const provisioned = await provisionDemoStaffAccount(
-        pool,
-        input.data,
-        emailPolicyConfig,
-      );
-      if (provisioned) user = (await runLoginLookup()).rows[0];
-    }
+    const user = (await runLoginLookup()).rows[0];
     let validPassword = false;
 
     if (user) {
@@ -2290,13 +2085,6 @@ function createApp({
       } catch {
         validPassword = false;
       }
-      if (!validPassword) {
-        validPassword = matchesDemoPassword(
-          user,
-          input.data.password,
-          emailPolicyConfig,
-        );
-      }
     } else {
       await argon2.hash(input.data.password, {
         type: argon2.argon2id,
@@ -2304,6 +2092,16 @@ function createApp({
         timeCost: 2,
         parallelism: 1,
       });
+    }
+
+    // Staff accounts must be on the whitelist for their stored role.
+    const staffNotWhitelisted =
+      user &&
+      user.role_name !== "Scholar" &&
+      !isWhitelistedStaff(user.email, user.role_name);
+
+    if (staffNotWhitelisted) {
+      return res.status(401).json({ message: "Email or password is invalid." });
     }
 
     if (!user || !user.is_active || !validPassword) {
@@ -2459,6 +2257,14 @@ function createApp({
       const row = result.rows[0];
 
       if (!row) {
+        clearSessionCookie(res, secureCookies);
+        return res.status(401).json({ message: "Authentication is required." });
+      }
+
+      if (
+        row.role_name !== "Scholar" &&
+        !isWhitelistedStaff(row.email, row.role_name)
+      ) {
         clearSessionCookie(res, secureCookies);
         return res.status(401).json({ message: "Authentication is required." });
       }

@@ -11,18 +11,18 @@ PostgreSQL backend.
 
 ## Frontend pages
 
-| Page | Route | Current state |
-| --- | --- | --- |
-| Public home | `/` | Responsive information site with program overview, general preparation guidance, and eligibility caveats. |
-| Scholarship programs | `/programs` | Reads active programs from the backend; shows a real empty state when none are available. |
-| Application instructions | `/application-guide` | Preparation checklist; explains that eligibility rules and document uploads are not stored by GrantWise. |
-| Login | `/login` | Authenticates with the backend session cookie. |
-| Portal directory | `/portals` | Opens student and role-checked staff workspaces. |
-| Student application portal | `/portal/student` | Authenticated students can submit supported applications and track their own application statuses. |
-| LGU program admin | `/portal/lgu-admin` | Funding-unit scoped programs, summaries, application review, and guarded award approval. |
-| Barangay coordinator | `/portal/barangay-coordinator` | Barangay-scoped verification queue, details, and verification actions. |
-| School registrar | `/portal/school-registrar` | School-scoped verification queue, supported academic records, and verification actions. |
-| System status | `/status` | Calls the existing API root to report whether the backend is reachable. |
+| Page                       | Route                          | Current state                                                                                             |
+| -------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Public home                | `/`                            | Responsive information site with program overview, general preparation guidance, and eligibility caveats. |
+| Scholarship programs       | `/programs`                    | Reads active programs from the backend; shows a real empty state when none are available.                 |
+| Application instructions   | `/application-guide`           | Preparation checklist; explains that eligibility rules and document uploads are not stored by GrantWise.  |
+| Login                      | `/login`                       | Authenticates with the backend session cookie.                                                            |
+| Portal directory           | `/portals`                     | Opens student and role-checked staff workspaces.                                                          |
+| Student application portal | `/portal/student`              | Authenticated students can submit supported applications and track their own application statuses.        |
+| LGU program admin          | `/portal/lgu-admin`            | Funding-unit scoped programs, summaries, application review, and guarded award approval.                  |
+| Barangay coordinator       | `/portal/barangay-coordinator` | Barangay-scoped verification queue, details, and verification actions.                                    |
+| School registrar           | `/portal/school-registrar`     | School-scoped verification queue, supported academic records, and verification actions.                   |
+| System status              | `/status`                      | Calls the existing API root to report whether the backend is reachable.                                   |
 
 The frontend does not fabricate programs, application records, eligibility
 rules, funding totals, or successful submissions. The schema includes funding
@@ -37,39 +37,39 @@ The frontend uses the public program endpoint, signup/login, student-owned
 application and status endpoints, and protected staff endpoints below. The
 System Status page checks only the API root.
 
-| Method | Route | Purpose | Frontend use |
-| --- | --- | --- | --- |
-| `GET` | `/` | API availability response | Used by System Status. |
-| `GET` | `/api/test-db` | Database connection test | Not called by the frontend. |
-| `POST` | `/api/init-db` | Runs schema initialization in non-production only | Not called by the frontend. |
-| `GET` | `/api/lookups` | Approved schools and barangays for signup | Signup page. |
-| `GET` | `/api/programs` | Public active program list and application-workflow readiness | Programs page and student portal. |
-| `POST` | `/api/auth/register` | Development-only: creates a Scholar account and student profile | Signup page. |
-| `POST` | `/api/auth/login` | Verifies password and sets an opaque session cookie | Login page. |
-| `GET` | `/api/auth/me` | Returns the authenticated user's public identity and role | Login and student portal. |
-| `POST` | `/api/auth/logout` | Revokes the current session | Backend route; no logout UI yet. |
-| `GET` | `/api/student/profile` | Current student's own profile | Not connected. |
-| `GET` | `/api/student/applications` | Current student's applications | Student portal. |
-| `POST` | `/api/student/applications` | Submits an application through the database workflow when required schema is installed | Student portal. |
-| `GET` | `/api/student/applications/:applicationId` | Owned application and verification status history | Student portal. |
-| `GET` | `/api/student/applications/:applicationId/documents` | Owned application document metadata (no file path/content) | Not connected. |
-| `GET` | `/api/coordinator/dashboard` | Barangay-scoped pending and information-request counts | Barangay portal. |
-| `GET` | `/api/coordinator/verifications[/:verificationId]` | Current coordinator's barangay-scoped queue/detail | Barangay portal. |
-| `PATCH` | `/api/coordinator/verifications/:verificationId` | Records an allowed barangay verification decision and notes | Barangay portal. |
-| `GET` | `/api/registrar/dashboard` | School-scoped pending and information-request counts | Registrar portal. |
-| `GET` | `/api/registrar/verifications[/:verificationId]` | Current registrar's school-scoped queue/detail and available academic records | Registrar portal. |
-| `PATCH` | `/api/registrar/verifications/:verificationId` | Records an allowed registrar verification decision and notes | Registrar portal. |
-| `POST` | `/api/registrar/applications/:applicationId/grade-reports` | Adds a schema-supported GPA/semester grade report for an application in the registrar's queue | Registrar portal. |
-| `POST` | `/api/registrar/applications/:applicationId/eligibility-checks` | Records a schema-supported eligibility check for an application in the registrar's queue | Registrar portal. |
-| `GET` | `/api/admin/dashboard` | Summary of programs, applications, and budget balances in the admin's assigned unit | LGU admin portal. |
-| `GET` | `/api/admin/funding-cycles` | Active funding cycles available for program creation | LGU admin portal. |
-| `GET` | `/api/admin/programs[/:programId]` | Funding-unit scoped program list/detail and allocations | LGU admin portal. |
-| `POST` | `/api/admin/programs` | Creates a program in the authenticated admin's funding unit | LGU admin portal. |
-| `PATCH` | `/api/admin/programs/:programId` | Updates permitted program name, status, or dates in that funding unit | LGU admin portal. |
-| `PUT` | `/api/admin/programs/:programId/barangay-allocations` | Replaces that program's barangay allocations within the unit and budget | LGU admin portal. |
-| `GET` | `/api/admin/applications[/:applicationId]` | Funding-unit scoped application list/detail | LGU admin portal. |
-| `GET` | `/api/admin/verifications[/:verificationId]` | Current LGU Admin's funding-unit-scoped review queue/detail | LGU admin portal. |
-| `PATCH` | `/api/admin/verifications/:verificationId` | Records the LGU decision and, on approval, creates and approves an award through the database reservation function | LGU admin portal. |
+| Method  | Route                                                           | Purpose                                                                                                            | Frontend use                      |
+| ------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------- |
+| `GET`   | `/`                                                             | API availability response                                                                                          | Used by System Status.            |
+| `GET`   | `/api/test-db`                                                  | Database connection test                                                                                           | Not called by the frontend.       |
+| `POST`  | `/api/init-db`                                                  | Runs schema initialization in non-production only                                                                  | Not called by the frontend.       |
+| `GET`   | `/api/lookups`                                                  | Approved schools and barangays for signup                                                                          | Signup page.                      |
+| `GET`   | `/api/programs`                                                 | Public active program list and application-workflow readiness                                                      | Programs page and student portal. |
+| `POST`  | `/api/auth/register`                                            | Development-only: creates a Scholar account and student profile                                                    | Signup page.                      |
+| `POST`  | `/api/auth/login`                                               | Verifies password and sets an opaque session cookie                                                                | Login page.                       |
+| `GET`   | `/api/auth/me`                                                  | Returns the authenticated user's public identity and role                                                          | Login and student portal.         |
+| `POST`  | `/api/auth/logout`                                              | Revokes the current session                                                                                        | Backend route; no logout UI yet.  |
+| `GET`   | `/api/student/profile`                                          | Current student's own profile                                                                                      | Not connected.                    |
+| `GET`   | `/api/student/applications`                                     | Current student's applications                                                                                     | Student portal.                   |
+| `POST`  | `/api/student/applications`                                     | Submits an application through the database workflow when required schema is installed                             | Student portal.                   |
+| `GET`   | `/api/student/applications/:applicationId`                      | Owned application and verification status history                                                                  | Student portal.                   |
+| `GET`   | `/api/student/applications/:applicationId/documents`            | Owned application document metadata (no file path/content)                                                         | Not connected.                    |
+| `GET`   | `/api/coordinator/dashboard`                                    | Barangay-scoped pending and information-request counts                                                             | Barangay portal.                  |
+| `GET`   | `/api/coordinator/verifications[/:verificationId]`              | Current coordinator's barangay-scoped queue/detail                                                                 | Barangay portal.                  |
+| `PATCH` | `/api/coordinator/verifications/:verificationId`                | Records an allowed barangay verification decision and notes                                                        | Barangay portal.                  |
+| `GET`   | `/api/registrar/dashboard`                                      | School-scoped pending and information-request counts                                                               | Registrar portal.                 |
+| `GET`   | `/api/registrar/verifications[/:verificationId]`                | Current registrar's school-scoped queue/detail and available academic records                                      | Registrar portal.                 |
+| `PATCH` | `/api/registrar/verifications/:verificationId`                  | Records an allowed registrar verification decision and notes                                                       | Registrar portal.                 |
+| `POST`  | `/api/registrar/applications/:applicationId/grade-reports`      | Adds a schema-supported GPA/semester grade report for an application in the registrar's queue                      | Registrar portal.                 |
+| `POST`  | `/api/registrar/applications/:applicationId/eligibility-checks` | Records a schema-supported eligibility check for an application in the registrar's queue                           | Registrar portal.                 |
+| `GET`   | `/api/admin/dashboard`                                          | Summary of programs, applications, and budget balances in the admin's assigned unit                                | LGU admin portal.                 |
+| `GET`   | `/api/admin/funding-cycles`                                     | Active funding cycles available for program creation                                                               | LGU admin portal.                 |
+| `GET`   | `/api/admin/programs[/:programId]`                              | Funding-unit scoped program list/detail and allocations                                                            | LGU admin portal.                 |
+| `POST`  | `/api/admin/programs`                                           | Creates a program in the authenticated admin's funding unit                                                        | LGU admin portal.                 |
+| `PATCH` | `/api/admin/programs/:programId`                                | Updates permitted program name, status, or dates in that funding unit                                              | LGU admin portal.                 |
+| `PUT`   | `/api/admin/programs/:programId/barangay-allocations`           | Replaces that program's barangay allocations within the unit and budget                                            | LGU admin portal.                 |
+| `GET`   | `/api/admin/applications[/:applicationId]`                      | Funding-unit scoped application list/detail                                                                        | LGU admin portal.                 |
+| `GET`   | `/api/admin/verifications[/:verificationId]`                    | Current LGU Admin's funding-unit-scoped review queue/detail                                                        | LGU admin portal.                 |
+| `PATCH` | `/api/admin/verifications/:verificationId`                      | Records the LGU decision and, on approval, creates and approves an award through the database reservation function | LGU admin portal.                 |
 
 Authentication uses Argon2id password hashes and opaque random session tokens.
 Only a SHA-256 hash of each session token is stored in the existing
